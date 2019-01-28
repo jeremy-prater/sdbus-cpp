@@ -120,7 +120,7 @@ namespace sdbus {
         {
             getObject().finishRegistration();
         }
-        
+        virtual ~ProxyInterfaces() { }
     };
 
 }

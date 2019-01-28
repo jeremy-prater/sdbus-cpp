@@ -104,6 +104,8 @@ std::string AdaptorGenerator::processInterface(Node& interface) const
             << propertyRegistration
             << tab << "}" << endl << endl;
 
+    body << tab << "virtual ~" << className << "() {}" << endl << endl;
+
     if (!signalMethods.empty())
     {
         body << "public:" << endl << signalMethods;

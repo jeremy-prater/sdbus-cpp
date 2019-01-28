@@ -97,6 +97,8 @@ std::string ProxyGenerator::processInterface(Node& interface) const
             << tab << "}" << endl << endl
             << declaration << endl;
 
+    body << tab << "virtual ~" << className << "() {}" << endl << endl;
+
     std::string methodDefinitions = processMethods(methods);
     if (!methodDefinitions.empty())
     {
