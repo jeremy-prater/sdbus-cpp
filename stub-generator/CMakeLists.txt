@@ -18,13 +18,24 @@ find_package(EXPAT REQUIRED)
 # SOURCE FILES CONFIGURATION
 #-------------------------------
 
-set(SDBUSCPP_XML2CPP_SRCS xml2cpp.cpp xml.cpp generator_utils.cpp BaseGenerator.cpp AdaptorGenerator.cpp ProxyGenerator.cpp)
+set(SDBUSCPP_XML2CPP_SRCS
+    xml2cpp.cpp
+    xml.h
+    xml.cpp
+    generator_utils.h
+    generator_utils.cpp
+    BaseGenerator.h
+    BaseGenerator.cpp
+    AdaptorGenerator.h
+    AdaptorGenerator.cpp
+    ProxyGenerator.h
+    ProxyGenerator.cpp)
 
 #-------------------------------
 # GENERAL COMPILER CONFIGURATION
 #-------------------------------
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 14)
 
 #----------------------------------
 # EXECUTABLE BUILD INFORMATION
