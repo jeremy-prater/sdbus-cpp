@@ -4,7 +4,7 @@
 
 cmake_minimum_required(VERSION 3.8)
 
-project(sdbus-c++ VERSION 0.3.2 LANGUAGES C CXX)
+project(sdbus-c++ VERSION 0.4.1 LANGUAGES C CXX)
 
 include(GNUInstallDirs) # Installation directories for `install` command and pkgconfig file
 
@@ -32,6 +32,7 @@ set(SDBUSCPP_CPP_SRCS
     ${SDBUSCPP_SOURCE_DIR}/Object.cpp
     ${SDBUSCPP_SOURCE_DIR}/ObjectProxy.cpp
     ${SDBUSCPP_SOURCE_DIR}/Types.cpp
+    ${SDBUSCPP_SOURCE_DIR}/Flags.cpp
     ${SDBUSCPP_SOURCE_DIR}/VTableUtils.c)
 
 set(SDBUSCPP_HDR_SRCS
@@ -56,7 +57,8 @@ set(SDBUSCPP_PUBLIC_HDRS
     ${SDBUSCPP_INCLUDE_DIR}/MethodResult.h
     ${SDBUSCPP_INCLUDE_DIR}/sdbus-c++.h
     ${SDBUSCPP_INCLUDE_DIR}/Types.h
-    ${SDBUSCPP_INCLUDE_DIR}/TypeTraits.h)
+    ${SDBUSCPP_INCLUDE_DIR}/TypeTraits.h
+    ${SDBUSCPP_INCLUDE_DIR}/Flags.h)
 
 set(SDBUSCPP_SRCS ${SDBUSCPP_CPP_SRCS} ${SDBUSCPP_HDR_SRCS} ${SDBUSCPP_PUBLIC_HDRS})
 
@@ -65,7 +67,6 @@ set(SDBUSCPP_SRCS ${SDBUSCPP_CPP_SRCS} ${SDBUSCPP_HDR_SRCS} ${SDBUSCPP_PUBLIC_HD
 #-------------------------------
 
 set(CMAKE_CXX_STANDARD 17)
-add_compile_options(-W -Wextra -Wall -Werror -pedantic)
 include_directories("${CMAKE_SOURCE_DIR}/include")
 include_directories("${CMAKE_SOURCE_DIR}/src")
 

@@ -29,21 +29,19 @@ method calls, signals and properties. There is room for additions and improvemen
 Integrating sdbus-c++ into your project
 ---------------------------------------
 
-The library build system is based on Autotools. The library supports `pkg-config`, so integrating it into your autotools project 
-is a two step process.
+The library build system is based on CMake. The library provides a config file, so integrating it into your CMake project is rather straight-forward:
 
-1. Add `PKG_CHECK_MODULES` macro into your `configure.ac`:
 ```bash
-PKG_CHECK_MODULES(SDBUSCPP, [sdbus-c++ >= 0.1],,
-    AC_MSG_ERROR([You need the sdbus-c++ library (version 0.1 or better)]
-    [http://www.kistler.com/])
-)
+find_package(sdbus-c++ REQUIRED)
 ```
 
-2. Update `*_CFLAGS` and `*_LDFLAGS` in Makefiles of modules that use *sdbus-c++*, for example like this:
+The library also supports `pkg-config`, so it easily be integrated into e.g. an Autotools project:
+
 ```bash
-AM_CXXFLAGS = -std=c++17 -pedantic -W -Wall @SDBUSCPP_CFLAGS@ ...
-AM_LDFLAGS = @SDBUSCPP_LIBS@ ...
+PKG_CHECK_MODULES(SDBUSCPP, [sdbus-c++ >= 0.4],,
+    AC_MSG_ERROR([You need the sdbus-c++ library (version 0.4 or newer)]
+    [http://www.kistler.com/])
+)
 ```
 
 Note: sdbus-c++ library depends on C++17, since it uses C++17 `std::uncaught_exceptions()` feature. When building sdbus-c++ manually, make sure you use a compiler that supports that feature. To use the library, make sure you have a C++ standard library that supports the feature. The feature is supported by e.g. gcc >= 6, and clang >= 3.7.
@@ -258,9 +256,15 @@ int main(int argc, char *argv[])
 }
 ```
 
-The object proxy can be created by either explicitly passing the connection object to it, or without the connection object. In the former case, we have the freedom of creating our own connection (to either system bus or to session bus) and then we can just move that connection object as the first argument of the proxy factory. The latter option is more convenient (no messing with connection for proxy), the proxy will create and manage its own connection, but the limitation is that it will be the connection to the **system** bus only.
+### Proxy and D-Bus connection
 
-If there are callbacks for signals, proxy will start listening to the signals upon the connection in a separate thread. That means the `onConcatenated` method is invoked always in the context of a thread different from the main thread.
+There are three ways of creating the object proxy -- three overloads of `sdbus::createObjectProxy`. They differ from each other as to how the proxy towards the connection will behave upon creation:
+
+* One that takes no connection as a parameter. This one is for convenience -- if you have a simple application and don't want to bother with connections, call this one. Internally, it will create a connection object, and it will be a *system* bus connection. The proxy will immediately create an internal thread and start a processing loop upon the clone of this connection in this thread as long as there is at least one signal registered, so the signals are correctly received and the callbacks are handled from within this internal thread. If there is no signal, i.e. the proxy just provides methods and/or properties, no connection clone is made, no thread is created and no processing loop is started -- you don't pay for what you don't use.
+
+* One that takes the connection as an **rvalue unique_ptr**. This one behaves the same as the above one, just that you must create the connection by yourself, and then `std::move` the ownership of it to the proxy. This comes with a flexibility that you can choose connection type (system, session).
+
+* One that takes the connection as an **lvalue reference**. This one behaves differently. You as a client are the owner of the connection, you take full control of it. The proxy just references the connection. This means the proxy does no async processing on it even when there are signals. It relies on you to manage the processing loop yourself (if you need it for signals).
 
 Implementing the Concatenator example using convenience sdbus-c++ API layer
 ---------------------------------------------------------------------------
@@ -357,7 +361,7 @@ int main(int argc, char *argv[])
     
     // Let's subscribe for the 'concatenated' signals
     const char* interfaceName = "org.sdbuscpp.Concatenator";
-    concatenatorProxy->uponSignal("concatenated").onInterface(interfaceName).call([this](const std::string& str){ onConcatenated(str); });
+    concatenatorProxy->uponSignal("concatenated").onInterface(interfaceName).call([](const std::string& str){ onConcatenated(str); });
     concatenatorProxy->finishRegistration();
     
     std::vector<int> numbers = {1, 2, 3};
@@ -632,10 +636,13 @@ protected:
 
 In the above example, a proxy is created that creates and maintains its own system bus connection. However, there are `ProxyInterfaces` class template constructor overloads that also take the connection from the user as the first parameter, and pass that connection over to the underlying proxy. The connection instance is used for all D-Bus proxy interfaces listed in the `ProxyInterfaces` template parameter list.
 
+Note however that there are multiple `ProxyInterfaces` constructor overloads, and they differ in how the proxy behaves towards the D-Bus connection. These overloads precisely map the `sdbus::createObjectProxy` overloads, as they are actually implemented on top of them. See [Proxy and D-Bus connection](#Proxy-and-D-Bus-connection) for more info.
+
 Now let's use this proxy to make remote calls and listen to signals in a real application.
 
 ```cpp
 #include "ConcatenatorProxy.h"
+#include <unistd.h>
 
 int main(int argc, char *argv[])
 {
