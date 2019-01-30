@@ -149,7 +149,7 @@ namespace sdbus {
         uint32_t fd;
 
     public:
-        UnixFD(): fd(0) {}
+        UnixFD(): fd(-1) {}
         UnixFD(uint32_t newfd): fd(newfd) {}
         UnixFD(const UnixFD &o): fd(o.fd) {}
         void set(uint32_t newfd) { fd = newfd; }
