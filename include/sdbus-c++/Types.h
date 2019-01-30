@@ -146,14 +146,14 @@ namespace sdbus {
     class UnixFD
     {
     private:
-        uint32_t fd;
+        int32_t fd;
 
     public:
         UnixFD(): fd(-1) {}
-        UnixFD(uint32_t newfd): fd(newfd) {}
+        UnixFD(int32_t newfd): fd(newfd) {}
         UnixFD(const UnixFD &o): fd(o.fd) {}
-        void set(uint32_t newfd) { fd = newfd; }
-        const uint32_t get() const noexcept { return fd; }
+        void set(int32_t newfd) { fd = newfd; }
+        const int32_t get() const noexcept { return fd; }
     };
 
     class Signature : public std::string
