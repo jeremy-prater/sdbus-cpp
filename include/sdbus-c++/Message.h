@@ -92,6 +92,7 @@ namespace sdbus {
         Message& operator<<(const std::string &item);
         Message& operator<<(const Variant &item);
         Message& operator<<(const ObjectPath &item);
+        Message& operator<<(const UnixFD &item);
         Message& operator<<(const Signature &item);
 
         Message& operator>>(bool& item);
@@ -107,6 +108,7 @@ namespace sdbus {
         Message& operator>>(std::string &item);
         Message& operator>>(Variant &item);
         Message& operator>>(ObjectPath &item);
+        Message& operator>>(UnixFD &item);
         Message& operator>>(Signature &item);
 
         Message& openContainer(const std::string& signature);

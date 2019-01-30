@@ -39,6 +39,7 @@ namespace sdbus {
     class Variant;
     template <typename... _ValueTypes> class Struct;
     class ObjectPath;
+    class UnixFD;
     class Signature;
     class Message;
     class MethodCall;
@@ -271,6 +272,17 @@ namespace sdbus {
         static const std::string str()
         {
             return "o";
+        }
+    };
+
+    template <>
+    struct signature_of<UnixFD>
+    {
+        static constexpr bool is_valid = true;
+
+        static const std::string str()
+        {
+            return "h";
         }
     };
 

@@ -36,7 +36,7 @@ const char *atomic_type_to_string(char t)
             { 'n', "int16_t" },
             { 'q', "uint16_t" },
             { 'i', "int32_t" },
-            { 'h', "int32_t" },
+            { 'h', "sdbus::UnixFD" },
             { 'u', "uint32_t" },
             { 'x', "int64_t" },
             { 't', "uint64_t" },
