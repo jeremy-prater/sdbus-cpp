@@ -1,5 +1,6 @@
 /**
- * (C) 2017 KISTLER INSTRUMENTE AG, Winterthur, Switzerland
+ * (C) 2016 - 2017 KISTLER INSTRUMENTE AG, Winterthur, Switzerland
+ * (C) 2016 - 2019 Stanislav Angelovic <angelovic.s@gmail.com>
  *
  * @file Message.cpp
  *
@@ -27,17 +28,34 @@
 #include <sdbus-c++/Types.h>
 #include <sdbus-c++/Error.h>
 #include "MessageUtils.h"
+#include "SdBus.h"
 #include "ScopeGuard.h"
 #include <systemd/sd-bus.h>
 #include <cassert>
 
 namespace sdbus {
 
-Message::Message(void *msg) noexcept
+Message::Message(internal::ISdBus* sdbus) noexcept
+    : sdbus_(sdbus)
+{
+    assert(sdbus_ != nullptr);
+}
+
+Message::Message(void *msg, internal::ISdBus* sdbus) noexcept
     : msg_(msg)
+    , sdbus_(sdbus)
 {
     assert(msg_ != nullptr);
-    sd_bus_message_ref((sd_bus_message*)msg_);
+    assert(sdbus_ != nullptr);
+    sdbus_->sd_bus_message_ref((sd_bus_message*)msg_);
+}
+
+Message::Message(void *msg, internal::ISdBus* sdbus, adopt_message_t) noexcept
+    : msg_(msg)
+    , sdbus_(sdbus)
+{
+    assert(msg_ != nullptr);
+    assert(sdbus_ != nullptr);
 }
 
 Message::Message(const Message& other) noexcept
@@ -48,12 +66,13 @@ Message::Message(const Message& other) noexcept
 Message& Message::operator=(const Message& other) noexcept
 {
     if (msg_)
-        sd_bus_message_unref((sd_bus_message*)msg_);
+        sdbus_->sd_bus_message_unref((sd_bus_message*)msg_);
 
     msg_ = other.msg_;
+    sdbus_ = other.sdbus_;
     ok_ = other.ok_;
 
-    sd_bus_message_ref((sd_bus_message*)msg_);
+    sdbus_->sd_bus_message_ref((sd_bus_message*)msg_);
 
     return *this;
 }
@@ -66,10 +85,12 @@ Message::Message(Message&& other) noexcept
 Message& Message::operator=(Message&& other) noexcept
 {
     if (msg_)
-        sd_bus_message_unref((sd_bus_message*)msg_);
+        sdbus_->sd_bus_message_unref((sd_bus_message*)msg_);
 
     msg_ = other.msg_;
     other.msg_ = nullptr;
+    sdbus_ = other.sdbus_;
+    other.sdbus_ = nullptr;
     ok_ = other.ok_;
     other.ok_ = true;
 
@@ -79,7 +100,7 @@ Message& Message::operator=(Message&& other) noexcept
 Message::~Message()
 {
     if (msg_)
-        sd_bus_message_unref((sd_bus_message*)msg_);
+        sdbus_->sd_bus_message_unref((sd_bus_message*)msg_);
 }
 
 Message& Message::operator<<(bool item)
@@ -200,7 +221,16 @@ Message& Message::operator<<(const UnixFD &item)
 Message& Message::operator<<(const Signature &item)
 {
     auto r = sd_bus_message_append_basic((sd_bus_message*)msg_, SD_BUS_TYPE_SIGNATURE, item.c_str());
-    SDBUS_THROW_ERROR_IF(r < 0, "Failed to serialize an Signature value", -r);
+    SDBUS_THROW_ERROR_IF(r < 0, "Failed to serialize a Signature value", -r);
+
+    return *this;
+}
+
+Message& Message::operator<<(const UnixFd &item)
+{
+    auto fd = item.get();
+    auto r = sd_bus_message_append_basic((sd_bus_message*)msg_, SD_BUS_TYPE_UNIX_FD, &fd);
+    SDBUS_THROW_ERROR_IF(r < 0, "Failed to serialize a UnixFd value", -r);
 
     return *this;
 }
@@ -389,6 +419,20 @@ Message& Message::operator>>(Signature &item)
 
     if (str != nullptr)
         item = str;
+
+    return *this;
+}
+
+Message& Message::operator>>(UnixFd &item)
+{
+    int fd = -1;
+    auto r = sd_bus_message_read_basic((sd_bus_message*)msg_, SD_BUS_TYPE_UNIX_FD, &fd);
+    if (r == 0)
+        ok_ = false;
+
+    SDBUS_THROW_ERROR_IF(r < 0, "Failed to deserialize a UnixFd value", -r);
+
+    item.reset(fd);
 
     return *this;
 }
@@ -588,30 +632,25 @@ void Message::peekType(std::string& type, std::string& contents) const
 
 bool Message::isValid() const
 {
-    return msg_ != nullptr;
+    return msg_ != nullptr && sdbus_ != nullptr;
 }
 
 bool Message::isEmpty() const
 {
-    return sd_bus_message_is_empty((sd_bus_message*)msg_);
-}
-
-void* Message::getMsg() const
-{
-    return msg_;
+    return sd_bus_message_is_empty((sd_bus_message*)msg_) != 0;
 }
 
 void MethodCall::dontExpectReply()
 {
-    auto r = sd_bus_message_set_expect_reply((sd_bus_message*)getMsg(), 0);
+    auto r = sd_bus_message_set_expect_reply((sd_bus_message*)msg_, 0);
     SDBUS_THROW_ERROR_IF(r < 0, "Failed to set the dont-expect-reply flag", -r);
 }
 
 bool MethodCall::doesntExpectReply() const
 {
-    auto r = sd_bus_message_get_expect_reply((sd_bus_message*)getMsg());
+    auto r = sd_bus_message_get_expect_reply((sd_bus_message*)msg_);
     SDBUS_THROW_ERROR_IF(r < 0, "Failed to get the dont-expect-reply flag", -r);
-    return r > 0 ? false : true;
+    return r == 0;
 }
 
 MethodReply MethodCall::send() const
@@ -624,41 +663,35 @@ MethodReply MethodCall::send() const
 
 MethodReply MethodCall::sendWithReply() const
 {
-    sd_bus_message* sdbusReply{};
-    SCOPE_EXIT{ sd_bus_message_unref(sdbusReply); }; // Returned message will become an owner of sdbusReply
     sd_bus_error sdbusError = SD_BUS_ERROR_NULL;
     SCOPE_EXIT{ sd_bus_error_free(&sdbusError); };
 
-    auto r = sd_bus_call(nullptr, (sd_bus_message*)getMsg(), 0, &sdbusError, &sdbusReply);
+    sd_bus_message* sdbusReply{};
+    auto r = sdbus_->sd_bus_call(nullptr, (sd_bus_message*)msg_, 0, &sdbusError, &sdbusReply);
 
     if (sd_bus_error_is_set(&sdbusError))
-    {
         throw sdbus::Error(sdbusError.name, sdbusError.message);
-    }
 
     SDBUS_THROW_ERROR_IF(r < 0, "Failed to call method", -r);
 
-    return MethodReply(sdbusReply);
+    return Factory::create<MethodReply>(sdbusReply, sdbus_, adopt_message);
 }
 
 MethodReply MethodCall::sendWithNoReply() const
 {
-    auto r = sd_bus_send(nullptr, (sd_bus_message*)getMsg(), nullptr);
+    auto r = sdbus_->sd_bus_send(nullptr, (sd_bus_message*)msg_, nullptr);
     SDBUS_THROW_ERROR_IF(r < 0, "Failed to call method with no reply", -r);
-    return MethodReply{}; // No reply
+
+    return Factory::create<MethodReply>(); // No reply
 }
 
 MethodReply MethodCall::createReply() const
 {
-    sd_bus_message *sdbusReply{};
-    SCOPE_EXIT{ sd_bus_message_unref(sdbusReply); }; // Returned message will become an owner of sdbusReply
-
-    auto r = sd_bus_message_new_method_return((sd_bus_message*)getMsg(), &sdbusReply);
+    sd_bus_message* sdbusReply{};
+    auto r = sdbus_->sd_bus_message_new_method_return((sd_bus_message*)msg_, &sdbusReply);
     SDBUS_THROW_ERROR_IF(r < 0, "Failed to create method reply", -r);
 
-    assert(sdbusReply != nullptr);
-
-    return MethodReply(sdbusReply);
+    return Factory::create<MethodReply>(sdbusReply, sdbus_, adopt_message);
 }
 
 MethodReply MethodCall::createErrorReply(const Error& error) const
@@ -667,44 +700,78 @@ MethodReply MethodCall::createErrorReply(const Error& error) const
     SCOPE_EXIT{ sd_bus_error_free(&sdbusError); };
     sd_bus_error_set(&sdbusError, error.getName().c_str(), error.getMessage().c_str());
 
-    sd_bus_message *sdbusErrorReply{};
-    SCOPE_EXIT{ sd_bus_message_unref(sdbusErrorReply); }; // Returned message will become an owner of sdbusErrorReply
-
-    auto r = sd_bus_message_new_method_error((sd_bus_message*)getMsg(), &sdbusErrorReply, &sdbusError);
+    sd_bus_message* sdbusErrorReply{};
+    auto r = sdbus_->sd_bus_message_new_method_error((sd_bus_message*)msg_, &sdbusErrorReply, &sdbusError);
     SDBUS_THROW_ERROR_IF(r < 0, "Failed to create method error reply", -r);
 
-    assert(sdbusErrorReply != nullptr);
+    return Factory::create<MethodReply>(sdbusErrorReply, sdbus_, adopt_message);
+}
 
-    return MethodReply(sdbusErrorReply);
+AsyncMethodCall::AsyncMethodCall(MethodCall&& call) noexcept
+    : Message(std::move(call))
+{
+}
+
+AsyncMethodCall::Slot AsyncMethodCall::send(void* callback, void* userData) const
+{
+    sd_bus_slot* slot;
+
+    auto r = sdbus_->sd_bus_call_async(nullptr, &slot, (sd_bus_message*)msg_, (sd_bus_message_handler_t)callback, userData, 0);
+    SDBUS_THROW_ERROR_IF(r < 0, "Failed to call method asynchronously", -r);
+
+    return Slot{slot, [sdbus_ = sdbus_](void *slot){ sdbus_->sd_bus_slot_unref((sd_bus_slot*)slot); }};
 }
 
 void MethodReply::send() const
 {
-    auto r = sd_bus_send(nullptr, (sd_bus_message*)getMsg(), nullptr);
+    auto r = sdbus_->sd_bus_send(nullptr, (sd_bus_message*)msg_, nullptr);
     SDBUS_THROW_ERROR_IF(r < 0, "Failed to send reply", -r);
 }
 
 void Signal::send() const
 {
-    auto r = sd_bus_send(nullptr, (sd_bus_message*)getMsg(), nullptr);
+    auto r = sdbus_->sd_bus_send(nullptr, (sd_bus_message*)msg_, nullptr);
     SDBUS_THROW_ERROR_IF(r < 0, "Failed to emit signal", -r);
 }
 
-Message createPlainMessage()
+PlainMessage createPlainMessage()
 {
     int r;
 
+    // All references to the bus (like created messages) must not outlive this thread (because messages refer to sdbus
+    // which is thread-local, and because BusReferenceKeeper below destroys the bus at thread exit).
+    // A more flexible solution would be that the caller would already provide an ISdBus reference as a parameter.
+    // Variant is one of the callers. This means Variant could no more be created in a stand-alone way, but
+    // through a factory of some existing facility (Object, Proxy, Connection...).
+    // TODO: Consider this alternative of creating Variant, it may live next to the current one. This function would
+    // get IConnection* parameter and IConnection would provide createPlainMessage factory (just like it already
+    // provides e.g. createMethodCall). If this parameter were null, the current mechanism would be used.
+
+    thread_local internal::SdBus sdbus;
+
     sd_bus* bus{};
-    SCOPE_EXIT{ sd_bus_unref(bus); }; // sdbusMsg will hold reference to the bus
+    SCOPE_EXIT{ sd_bus_unref(bus); };
     r = sd_bus_default_system(&bus);
     SDBUS_THROW_ERROR_IF(r < 0, "Failed to get default system bus", -r);
 
+    thread_local struct BusReferenceKeeper
+    {
+        explicit BusReferenceKeeper(sd_bus* bus) : bus_(sd_bus_ref(bus)) { sd_bus_flush(bus_); }
+        ~BusReferenceKeeper() { sd_bus_flush_close_unref(bus_); }
+        sd_bus* bus_{};
+    } busReferenceKeeper{bus};
+
+    // Shelved here as handy thing for potential future tracing purposes:
+    //#include <unistd.h>
+    //#include <sys/syscall.h>
+    //#define gettid() syscall(SYS_gettid)
+    //printf("createPlainMessage: sd_bus*=[%p], n_ref=[%d], TID=[%d]\n", bus, *(unsigned*)bus, gettid());
+
     sd_bus_message* sdbusMsg{};
-    SCOPE_EXIT{ sd_bus_message_unref(sdbusMsg); }; // Returned message will become an owner of sdbusMsg
     r = sd_bus_message_new(bus, &sdbusMsg, _SD_BUS_MESSAGE_TYPE_INVALID);
     SDBUS_THROW_ERROR_IF(r < 0, "Failed to create a new message", -r);
 
-    return Message(sdbusMsg);
+    return Message::Factory::create<PlainMessage>(sdbusMsg, &sdbus, adopt_message);
 }
 
 }

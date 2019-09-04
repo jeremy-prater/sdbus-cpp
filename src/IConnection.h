@@ -1,5 +1,6 @@
 /**
- * (C) 2017 KISTLER INSTRUMENTE AG, Winterthur, Switzerland
+ * (C) 2016 - 2017 KISTLER INSTRUMENTE AG, Winterthur, Switzerland
+ * (C) 2016 - 2019 Stanislav Angelovic <angelovic.s@gmail.com>
  *
  * @file IConnection.h
  *
@@ -29,50 +30,67 @@
 #include <systemd/sd-bus.h>
 #include <string>
 #include <memory>
+#include <functional>
+#include <vector>
 
 // Forward declaration
 namespace sdbus {
     class MethodCall;
+    class AsyncMethodCall;
     class MethodReply;
     class Signal;
+    namespace internal {
+        class ISdBus;
+    }
 }
 
 namespace sdbus {
 namespace internal {
 
+    using SlotPtr = std::unique_ptr<void, std::function<void(void*)>>;
+
     class IConnection
     {
     public:
-        virtual void* addObjectVTable( const std::string& objectPath
-                                     , const std::string& interfaceName
-                                     , const void* vtable
-                                     , void* userData ) = 0;
-        virtual void removeObjectVTable(void* vtableHandle) = 0;
+        virtual ~IConnection() = default;
 
-        virtual sdbus::MethodCall createMethodCall( const std::string& destination
-                                                  , const std::string& objectPath
-                                                  , const std::string& interfaceName
-                                                  , const std::string& methodName ) const = 0;
+        virtual const ISdBus& getSdBusInterface() const = 0;
+        virtual ISdBus& getSdBusInterface() = 0;
 
-        virtual sdbus::Signal createSignal( const std::string& objectPath
-                                          , const std::string& interfaceName
-                                          , const std::string& signalName ) const = 0;
+        virtual SlotPtr addObjectVTable( const std::string& objectPath
+                                       , const std::string& interfaceName
+                                       , const sd_bus_vtable* vtable
+                                       , void* userData ) = 0;
 
-        virtual void* registerSignalHandler( const std::string& objectPath
+        virtual MethodCall createMethodCall( const std::string& destination
+                                           , const std::string& objectPath
                                            , const std::string& interfaceName
-                                           , const std::string& signalName
-                                           , sd_bus_message_handler_t callback
-                                           , void* userData ) = 0;
-        virtual void unregisterSignalHandler(void* handlerCookie) = 0;
+                                           , const std::string& methodName ) const = 0;
+
+        virtual Signal createSignal( const std::string& objectPath
+                                   , const std::string& interfaceName
+                                   , const std::string& signalName ) const = 0;
+
+        virtual void emitPropertiesChangedSignal( const std::string& objectPath
+                                                , const std::string& interfaceName
+                                                , const std::vector<std::string>& propNames ) = 0;
+        virtual void emitInterfacesAddedSignal(const std::string& objectPath) = 0;
+        virtual void emitInterfacesAddedSignal( const std::string& objectPath
+                                              , const std::vector<std::string>& interfaces ) = 0;
+        virtual void emitInterfacesRemovedSignal(const std::string& objectPath) = 0;
+        virtual void emitInterfacesRemovedSignal( const std::string& objectPath
+                                                , const std::vector<std::string>& interfaces ) = 0;
+
+        virtual SlotPtr addObjectManager(const std::string& objectPath, void* /*dummy*/ = nullptr) = 0;
+
+        virtual SlotPtr registerSignalHandler( const std::string& objectPath
+                                             , const std::string& interfaceName
+                                             , const std::string& signalName
+                                             , sd_bus_message_handler_t callback
+                                             , void* userData ) = 0;
 
         virtual void enterProcessingLoopAsync() = 0;
         virtual void leaveProcessingLoop() = 0;
-
-        virtual void sendReplyAsynchronously(const sdbus::MethodReply& reply) = 0;
-
-        virtual std::unique_ptr<sdbus::internal::IConnection> clone() const = 0;
-
-        virtual ~IConnection() = default;
     };
 
 }

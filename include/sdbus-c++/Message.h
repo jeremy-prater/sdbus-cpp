@@ -1,5 +1,6 @@
 /**
- * (C) 2017 KISTLER INSTRUMENTE AG, Winterthur, Switzerland
+ * (C) 2016 - 2017 KISTLER INSTRUMENTE AG, Winterthur, Switzerland
+ * (C) 2016 - 2019 Stanislav Angelovic <angelovic.s@gmail.com>
  *
  * @file Message.h
  *
@@ -35,8 +36,7 @@
 #include <utility>
 #include <cstdint>
 #include <cassert>
-
-#include <iostream>
+#include <functional>
 
 // Forward declarations
 namespace sdbus {
@@ -44,15 +44,22 @@ namespace sdbus {
     class ObjectPath;
     class Signature;
     template <typename... _ValueTypes> class Struct;
-
-    class Message;
-    class MethodCall;
+    struct UnixFd;
     class MethodReply;
-    class Signal;
-    template <typename... _Results> class Result;
+    namespace internal {
+        class ISdBus;
+    }
 }
 
 namespace sdbus {
+
+    // Assume the caller has already obtained message ownership
+    struct adopt_message_t { explicit adopt_message_t() = default; };
+#ifdef __cpp_inline_variables
+    inline constexpr adopt_message_t adopt_message{};
+#else
+    constexpr adopt_message_t adopt_message{};
+#endif
 
     /********************************************//**
      * @class Message
@@ -65,20 +72,12 @@ namespace sdbus {
      * by D-Bus.
      *
      * You don't need to work with this class directly if you use high-level APIs
-     * of @c IObject and @c IObjectProxy.
+     * of @c IObject and @c IProxy.
      *
      ***********************************************/
     class Message
     {
     public:
-        Message() = default;
-        Message(void *msg) noexcept;
-        Message(const Message&) noexcept;
-        Message& operator=(const Message&) noexcept;
-        Message(Message&& other) noexcept;
-        Message& operator=(Message&& other) noexcept;
-        ~Message();
-
         Message& operator<<(bool item);
         Message& operator<<(int16_t item);
         Message& operator<<(int32_t item);
@@ -94,6 +93,7 @@ namespace sdbus {
         Message& operator<<(const ObjectPath &item);
         Message& operator<<(const UnixFD &item);
         Message& operator<<(const Signature &item);
+        Message& operator<<(const UnixFd &item);
 
         Message& operator>>(bool& item);
         Message& operator>>(int16_t& item);
@@ -110,6 +110,7 @@ namespace sdbus {
         Message& operator>>(ObjectPath &item);
         Message& operator>>(UnixFD &item);
         Message& operator>>(Signature &item);
+        Message& operator>>(UnixFd &item);
 
         Message& openContainer(const std::string& signature);
         Message& closeContainer();
@@ -129,7 +130,7 @@ namespace sdbus {
         Message& enterStruct(const std::string& signature);
         Message& exitStruct();
 
-        operator bool() const;
+        explicit operator bool() const;
         void clearFlags();
 
         std::string getInterfaceName() const;
@@ -142,18 +143,36 @@ namespace sdbus {
         void seal();
         void rewind(bool complete);
 
-    protected:
-        void* getMsg() const;
+        class Factory;
 
-    private:
+    protected:
+        Message() = default;
+        explicit Message(internal::ISdBus* sdbus) noexcept;
+        Message(void *msg, internal::ISdBus* sdbus) noexcept;
+        Message(void *msg, internal::ISdBus* sdbus, adopt_message_t) noexcept;
+
+        Message(const Message&) noexcept;
+        Message& operator=(const Message&) noexcept;
+        Message(Message&& other) noexcept;
+        Message& operator=(Message&& other) noexcept;
+
+        ~Message();
+
+        friend Factory;
+
+    protected:
         void* msg_{};
+        internal::ISdBus* sdbus_{};
         mutable bool ok_{true};
     };
 
     class MethodCall : public Message
     {
-    public:
         using Message::Message;
+        friend Factory;
+
+    public:
+        MethodCall() = default;
         MethodReply send() const;
         MethodReply createReply() const;
         MethodReply createErrorReply(const sdbus::Error& error) const;
@@ -165,18 +184,64 @@ namespace sdbus {
         MethodReply sendWithNoReply() const;
     };
 
+    class AsyncMethodCall : public Message
+    {
+        using Message::Message;
+        friend Factory;
+
+    public:
+        using Slot = std::unique_ptr<void, std::function<void(void*)>>;
+
+        AsyncMethodCall() = default;
+        explicit AsyncMethodCall(MethodCall&& call) noexcept;
+        Slot send(void* callback, void* userData) const;
+    };
+
     class MethodReply : public Message
     {
-    public:
         using Message::Message;
+        friend Factory;
+
+    public:
+        MethodReply() = default;
         void send() const;
     };
 
     class Signal : public Message
     {
-    public:
         using Message::Message;
+        friend Factory;
+
+    public:
+        Signal() = default;
         void send() const;
+    };
+
+    class PropertySetCall : public Message
+    {
+        using Message::Message;
+        friend Factory;
+
+    public:
+        PropertySetCall() = default;
+    };
+
+    class PropertyGetReply : public Message
+    {
+        using Message::Message;
+        friend Factory;
+
+    public:
+        PropertyGetReply() = default;
+    };
+
+    class PlainMessage : public Message
+    {
+        using Message::Message;
+        friend Factory;
+
+    public:
+        PlainMessage() = default;
     };
 
     template <typename _Element>

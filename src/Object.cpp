@@ -1,5 +1,6 @@
 /**
- * (C) 2017 KISTLER INSTRUMENTE AG, Winterthur, Switzerland
+ * (C) 2016 - 2017 KISTLER INSTRUMENTE AG, Winterthur, Switzerland
+ * (C) 2016 - 2019 Stanislav Angelovic <angelovic.s@gmail.com>
  *
  * @file Object.cpp
  *
@@ -24,6 +25,7 @@
  */
 
 #include "Object.h"
+#include "MessageUtils.h"
 #include <sdbus-c++/IConnection.h>
 #include <sdbus-c++/Message.h>
 #include <sdbus-c++/Error.h>
@@ -51,37 +53,8 @@ void Object::registerMethod( const std::string& interfaceName
 {
     SDBUS_THROW_ERROR_IF(!methodCallback, "Invalid method callback provided", EINVAL);
 
-    auto syncCallback = [callback = std::move(methodCallback)](MethodCall& msg)
-    {
-        auto reply = msg.createReply();
-        callback(msg, reply);
-        reply.send();
-    };
-
     auto& interface = interfaces_[interfaceName];
-    InterfaceData::MethodData methodData{inputSignature, outputSignature, std::move(syncCallback), flags};
-    auto inserted = interface.methods_.emplace(methodName, std::move(methodData)).second;
-
-    SDBUS_THROW_ERROR_IF(!inserted, "Failed to register method: method already exists", EINVAL);
-}
-
-void Object::registerMethod( const std::string& interfaceName
-                           , const std::string& methodName
-                           , const std::string& inputSignature
-                           , const std::string& outputSignature
-                           , async_method_callback asyncMethodCallback
-                           , Flags flags )
-{
-    SDBUS_THROW_ERROR_IF(!asyncMethodCallback, "Invalid method callback provided", EINVAL);
-
-    auto asyncCallback = [this, callback = std::move(asyncMethodCallback)](MethodCall& msg)
-    {
-        MethodResult result{msg, *this};
-        callback(msg, result);
-    };
-
-    auto& interface = interfaces_[interfaceName];
-    InterfaceData::MethodData methodData{inputSignature, outputSignature, std::move(asyncCallback), flags};
+    InterfaceData::MethodData methodData{inputSignature, outputSignature, std::move(methodCallback), flags};
     auto inserted = interface.methods_.emplace(methodName, std::move(methodData)).second;
 
     SDBUS_THROW_ERROR_IF(!inserted, "Failed to register method: method already exists", EINVAL);
@@ -149,6 +122,11 @@ void Object::finishRegistration()
     }
 }
 
+void Object::unregister()
+{
+    interfaces_.clear();
+}
+
 sdbus::Signal Object::createSignal(const std::string& interfaceName, const std::string& signalName)
 {
     return connection_.createSignal(objectPath_, interfaceName, signalName);
@@ -156,15 +134,57 @@ sdbus::Signal Object::createSignal(const std::string& interfaceName, const std::
 
 void Object::emitSignal(const sdbus::Signal& message)
 {
-    // TODO: Make signal emitting asynchronous. Now signal can probably be emitted only from user code
-    // handled within the D-Bus processing loop thread, but not from any thread. In principle it will
-    // be the same as async replies.
     message.send();
 }
 
-void Object::sendReplyAsynchronously(const MethodReply& reply)
+void Object::emitPropertiesChangedSignal(const std::string& interfaceName, const std::vector<std::string>& propNames)
 {
-    connection_.sendReplyAsynchronously(reply);
+    connection_.emitPropertiesChangedSignal(objectPath_, interfaceName, propNames);
+}
+
+void Object::emitPropertiesChangedSignal(const std::string& interfaceName)
+{
+    Object::emitPropertiesChangedSignal(interfaceName, {});
+}
+
+void Object::emitInterfacesAddedSignal()
+{
+    connection_.emitInterfacesAddedSignal(objectPath_);
+}
+
+void Object::emitInterfacesAddedSignal(const std::vector<std::string>& interfaces)
+{
+    connection_.emitInterfacesAddedSignal(objectPath_, interfaces);
+}
+
+void Object::emitInterfacesRemovedSignal()
+{
+    connection_.emitInterfacesRemovedSignal(objectPath_);
+}
+
+void Object::emitInterfacesRemovedSignal(const std::vector<std::string>& interfaces)
+{
+    connection_.emitInterfacesRemovedSignal(objectPath_, interfaces);
+}
+
+void Object::addObjectManager()
+{
+    objectManagerSlot_ = connection_.addObjectManager(objectPath_);
+}
+
+void Object::removeObjectManager()
+{
+    objectManagerSlot_.reset();
+}
+
+bool Object::hasObjectManager() const
+{
+    return objectManagerSlot_ != nullptr;
+}
+
+sdbus::IConnection& Object::getConnection() const
+{
+    return dynamic_cast<sdbus::IConnection&>(connection_);
 }
 
 const std::vector<sd_bus_vtable>& Object::createInterfaceVTable(InterfaceData& interfaceData)
@@ -234,24 +254,23 @@ void Object::activateInterfaceVTable( const std::string& interfaceName
                                     , InterfaceData& interfaceData
                                     , const std::vector<sd_bus_vtable>& vtable )
 {
-    // Tell, don't ask
-    auto slot = (sd_bus_slot*) connection_.addObjectVTable(objectPath_, interfaceName, &vtable[0], this);
-    interfaceData.slot_.reset(slot);
-    interfaceData.slot_.get_deleter() = [this](void *slot){ connection_.removeObjectVTable(slot); };
+    interfaceData.slot_ = connection_.addObjectVTable(objectPath_, interfaceName, &vtable[0], this);
 }
 
 int Object::sdbus_method_callback(sd_bus_message *sdbusMessage, void *userData, sd_bus_error *retError)
 {
-    MethodCall message(sdbusMessage);
-
     auto* object = static_cast<Object*>(userData);
+    assert(object != nullptr);
+
+    auto message = Message::Factory::create<MethodCall>(sdbusMessage, &object->connection_.getSdBusInterface());
+
     // Note: The lookup can be optimized by using sorted vectors instead of associative containers
     auto& callback = object->interfaces_[message.getInterfaceName()].methods_[message.getMemberName()].callback_;
     assert(callback);
 
     try
     {
-        callback(message);
+        callback(std::move(message));
     }
     catch (const sdbus::Error& e)
     {
@@ -269,9 +288,9 @@ int Object::sdbus_property_get_callback( sd_bus */*bus*/
                                        , void *userData
                                        , sd_bus_error *retError )
 {
-    Message reply(sdbusReply);
-
     auto* object = static_cast<Object*>(userData);
+    assert(object != nullptr);
+
     // Note: The lookup can be optimized by using sorted vectors instead of associative containers
     auto& callback = object->interfaces_[interface].properties_[property].getCallback_;
     // Getter can be empty - the case of "write-only" property
@@ -280,6 +299,8 @@ int Object::sdbus_property_get_callback( sd_bus */*bus*/
         sd_bus_error_set(retError, "org.freedesktop.DBus.Error.Failed", "Cannot read property as it is write-only");
         return 1;
     }
+
+    auto reply = Message::Factory::create<PropertyGetReply>(sdbusReply, &object->connection_.getSdBusInterface());
 
     try
     {
@@ -301,12 +322,14 @@ int Object::sdbus_property_set_callback( sd_bus */*bus*/
                                        , void *userData
                                        , sd_bus_error *retError )
 {
-    Message value(sdbusValue);
-
     auto* object = static_cast<Object*>(userData);
+    assert(object != nullptr);
+
     // Note: The lookup can be optimized by using sorted vectors instead of associative containers
     auto& callback = object->interfaces_[interface].properties_[property].setCallback_;
     assert(callback);
+
+    auto value = Message::Factory::create<PropertySetCall>(sdbusValue, &object->connection_.getSdBusInterface());
 
     try
     {

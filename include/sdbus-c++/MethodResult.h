@@ -1,7 +1,8 @@
 /**
- * (C) 2017 KISTLER INSTRUMENTE AG, Winterthur, Switzerland
+ * (C) 2016 - 2017 KISTLER INSTRUMENTE AG, Winterthur, Switzerland
+ * (C) 2016 - 2019 Stanislav Angelovic <angelovic.s@gmail.com>
  *
- * @file ConvenienceClasses.h
+ * @file MethodResult.h
  *
  * Created on: Nov 8, 2016
  * Project: sdbus-c++
@@ -31,59 +32,10 @@
 
 // Forward declaration
 namespace sdbus {
-    namespace internal {
-        class Object;
-    }
     class Error;
 }
 
 namespace sdbus {
-
-    /********************************************//**
-     * @class MethodResult
-     *
-     * Represents result of an asynchronous server-side method.
-     * An instance is provided to the method and shall be set
-     * by the method to either method return value or an error.
-     *
-     ***********************************************/
-    class MethodResult
-    {
-    protected:
-        friend sdbus::internal::Object;
-        MethodResult() = default;
-        MethodResult(const MethodCall& msg, sdbus::internal::Object& object);
-
-        template <typename... _Results> void returnResults(const _Results&... results) const;
-        void returnError(const Error& error) const;
-
-    private:
-        void send(const MethodReply& reply) const;
-
-    private:
-        MethodCall call_;
-        sdbus::internal::Object* object_{};
-    };
-
-    template <typename... _Results>
-    inline void MethodResult::returnResults(const _Results&... results) const
-    {
-        assert(call_.isValid());
-        auto reply = call_.createReply();
-#ifdef __cpp_fold_expressions
-        (reply << ... << results);
-#else
-        using _ = std::initializer_list<int>;
-        (void)_{(void(reply << results), 0)...};
-#endif
-        send(reply);
-    }
-
-    inline void MethodResult::returnError(const Error& error) const
-    {
-        auto reply = call_.createErrorReply(error);
-        send(reply);
-    }
 
     /********************************************//**
      * @class Result
@@ -94,31 +46,50 @@ namespace sdbus {
      *
      ***********************************************/
     template <typename... _Results>
-    class Result : protected MethodResult
+    class Result
     {
     public:
         Result() = default;
-        Result(MethodResult result);
+        Result(MethodCall call);
+
+        Result(const Result&) = delete;
+        Result& operator=(const Result&) = delete;
+
+        Result(Result&& other) = default;
+        Result& operator=(Result&& other) = default;
+
         void returnResults(const _Results&... results) const;
         void returnError(const Error& error) const;
+
+    private:
+        MethodCall call_;
     };
 
     template <typename... _Results>
-    inline Result<_Results...>::Result(MethodResult result)
-        : MethodResult(std::move(result))
+    inline Result<_Results...>::Result(MethodCall call)
+        : call_(std::move(call))
     {
     }
 
     template <typename... _Results>
     inline void Result<_Results...>::returnResults(const _Results&... results) const
     {
-        MethodResult::returnResults(results...);
+        assert(call_.isValid());
+        auto reply = call_.createReply();
+#ifdef __cpp_fold_expressions
+        (reply << ... << results);
+#else
+        using _ = std::initializer_list<int>;
+        (void)_{(void(reply << results), 0)...};
+#endif
+        reply.send();
     }
 
     template <typename... _Results>
     inline void Result<_Results...>::returnError(const Error& error) const
     {
-        MethodResult::returnError(error);
+        auto reply = call_.createErrorReply(error);
+        reply.send();
     }
 
 }

@@ -1,5 +1,6 @@
 /**
- * (C) 2017 KISTLER INSTRUMENTE AG, Winterthur, Switzerland
+ * (C) 2016 - 2017 KISTLER INSTRUMENTE AG, Winterthur, Switzerland
+ * (C) 2016 - 2019 Stanislav Angelovic <angelovic.s@gmail.com>
  *
  * @file Types.cpp
  *
@@ -29,7 +30,7 @@
 #include <systemd/sd-bus.h>
 #include <cassert>
 
-namespace sdbus { /*namespace internal {*/
+namespace sdbus {
 
 Variant::Variant()
     : msg_(createPlainMessage())

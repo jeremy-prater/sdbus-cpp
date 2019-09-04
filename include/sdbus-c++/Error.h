@@ -1,7 +1,8 @@
 /**
- * (C) 2017 KISTLER INSTRUMENTE AG, Winterthur, Switzerland
+ * (C) 2016 - 2017 KISTLER INSTRUMENTE AG, Winterthur, Switzerland
+ * (C) 2016 - 2019 Stanislav Angelovic <angelovic.s@gmail.com>
  *
- * @file ConvenienceClasses.h
+ * @file Error.h
  *
  * Created on: Nov 8, 2016
  * Project: sdbus-c++
@@ -57,6 +58,11 @@ namespace sdbus {
             return message_;
         }
 
+        bool isValid() const
+        {
+            return !getName().empty();
+        }
+
     private:
         std::string name_;
         std::string message_;
@@ -65,12 +71,12 @@ namespace sdbus {
     sdbus::Error createError(int errNo, const std::string& customMsg);
 }
 
-#define SDBUS_THROW_ERROR(_MSG, _ERRNO)            \
-    throw sdbus::createError((_ERRNO), (_MSG))     \
+#define SDBUS_THROW_ERROR(_MSG, _ERRNO)                         \
+    throw sdbus::createError((_ERRNO), (_MSG))                  \
     /**/
 
-#define SDBUS_THROW_ERROR_IF(_COND, _MSG, _ERRNO)  \
-    if (_COND) SDBUS_THROW_ERROR((_MSG), (_ERRNO)) \
+#define SDBUS_THROW_ERROR_IF(_COND, _MSG, _ERRNO)               \
+    if (!(_COND)) ; else SDBUS_THROW_ERROR((_MSG), (_ERRNO))    \
     /**/
 
 #endif /* SDBUS_CXX_ERROR_H_ */

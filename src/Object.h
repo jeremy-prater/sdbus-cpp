@@ -1,5 +1,6 @@
 /**
- * (C) 2017 KISTLER INSTRUMENTE AG, Winterthur, Switzerland
+ * (C) 2016 - 2017 KISTLER INSTRUMENTE AG, Winterthur, Switzerland
+ * (C) 2016 - 2019 Stanislav Angelovic <angelovic.s@gmail.com>
  *
  * @file Object.h
  *
@@ -52,13 +53,6 @@ namespace internal {
                            , method_callback methodCallback
                            , Flags flags ) override;
 
-        void registerMethod( const std::string& interfaceName
-                           , const std::string& methodName
-                           , const std::string& inputSignature
-                           , const std::string& outputSignature
-                           , async_method_callback asyncMethodCallback
-                           , Flags flags ) override;
-
         void registerSignal( const std::string& interfaceName
                            , const std::string& signalName
                            , const std::string& signature
@@ -80,11 +74,22 @@ namespace internal {
         void setInterfaceFlags(const std::string& interfaceName, Flags flags) override;
 
         void finishRegistration() override;
+        void unregister() override;
 
         sdbus::Signal createSignal(const std::string& interfaceName, const std::string& signalName) override;
         void emitSignal(const sdbus::Signal& message) override;
+        void emitPropertiesChangedSignal(const std::string& interfaceName, const std::vector<std::string>& propNames) override;
+        void emitPropertiesChangedSignal(const std::string& interfaceName) override;
+        void emitInterfacesAddedSignal() override;
+        void emitInterfacesAddedSignal(const std::vector<std::string>& interfaces) override;
+        void emitInterfacesRemovedSignal() override;
+        void emitInterfacesRemovedSignal(const std::vector<std::string>& interfaces) override;
 
-        void sendReplyAsynchronously(const MethodReply& reply);
+        void addObjectManager() override;
+        void removeObjectManager() override;
+        bool hasObjectManager() const override;
+
+        sdbus::IConnection& getConnection() const override;
 
     private:
         using InterfaceName = std::string;
@@ -95,7 +100,7 @@ namespace internal {
             {
                 std::string inputArgs_;
                 std::string outputArgs_;
-                std::function<void(MethodCall&)> callback_;
+                method_callback callback_;
                 Flags flags_;
             };
             std::map<MethodName, MethodData> methods_;
@@ -118,7 +123,7 @@ namespace internal {
             std::vector<sd_bus_vtable> vtable_;
             Flags flags_;
 
-            std::unique_ptr<void, std::function<void(void*)>> slot_;
+            SlotPtr slot_;
         };
 
         static const std::vector<sd_bus_vtable>& createInterfaceVTable(InterfaceData& interfaceData);
@@ -149,6 +154,7 @@ namespace internal {
         sdbus::internal::IConnection& connection_;
         std::string objectPath_;
         std::map<InterfaceName, InterfaceData> interfaces_;
+        SlotPtr objectManagerSlot_;
     };
 
 }

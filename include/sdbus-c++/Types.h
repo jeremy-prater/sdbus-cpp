@@ -1,5 +1,6 @@
 /**
- * (C) 2017 KISTLER INSTRUMENTE AG, Winterthur, Switzerland
+ * (C) 2016 - 2017 KISTLER INSTRUMENTE AG, Winterthur, Switzerland
+ * (C) 2016 - 2019 Stanislav Angelovic <angelovic.s@gmail.com>
  *
  * @file Types.h
  *
@@ -34,6 +35,7 @@
 #include <memory>
 #include <tuple>
 #include <any>
+#include <unistd.h>
 
 namespace sdbus {
 
@@ -95,9 +97,15 @@ namespace sdbus {
         std::string peekValueType() const;
 
     private:
-        mutable Message msg_{};
+        mutable PlainMessage msg_{};
     };
 
+    /********************************************//**
+     * @class Struct
+     *
+     * Representation of struct D-Bus type
+     *
+     ***********************************************/
     template <typename... _ValueTypes>
     class Struct
         : public std::tuple<_ValueTypes...>
@@ -136,10 +144,20 @@ namespace sdbus {
         return result_type(std::forward<_Elements>(args)...);
     }
 
+    /********************************************//**
+     * @class ObjectPath
+     *
+     * Representation of object path D-Bus type
+     *
+     ***********************************************/
     class ObjectPath : public std::string
     {
     public:
         using std::string::string;
+        ObjectPath() = default; // Fixes gcc 6.3 error (default c-tor is not imported in above using declaration)
+        ObjectPath(std::string path)
+            : std::string(std::move(path))
+        {}
         using std::string::operator=;
     };
 
@@ -156,11 +174,122 @@ namespace sdbus {
         const int32_t get() const noexcept { return fd; }
     };
 
+
+    /********************************************//**
+     * @class Signature
+     *
+     * Representation of Signature D-Bus type
+     *
+     ***********************************************/
     class Signature : public std::string
     {
     public:
         using std::string::string;
+        Signature() = default; // Fixes gcc 6.3 error (default c-tor is not imported in above using declaration)
+        Signature(std::string path)
+            : std::string(std::move(path))
+        {}
         using std::string::operator=;
+    };
+
+    struct adopt_fd_t { explicit adopt_fd_t() = default; };
+#ifdef __cpp_inline_variables
+    inline constexpr adopt_fd_t adopt_fd{};
+#else
+    constexpr adopt_fd_t adopt_fd{};
+#endif
+
+    /********************************************//**
+     * @struct UnixFd
+     *
+     * UnixFd is a representation of file descriptor D-Bus type that owns
+     * the underlying fd, provides access to it, and closes the fd when
+     * the UnixFd goes out of scope.
+     *
+     * UnixFd can be default constructed (owning invalid fd), or constructed from
+     * an explicitly provided fd by either duplicating or adopting that fd as-is.
+     *
+     ***********************************************/
+    class UnixFd
+    {
+    public:
+        UnixFd() = default;
+
+        explicit UnixFd(int fd)
+            : fd_(::dup(fd))
+        {
+        }
+
+        UnixFd(int fd, adopt_fd_t)
+            : fd_(fd)
+        {
+        }
+
+        UnixFd(const UnixFd& other)
+        {
+            *this = other;
+        }
+
+        UnixFd& operator=(const UnixFd& other)
+        {
+            close();
+            fd_ = ::dup(other.fd_);
+            return *this;
+        }
+
+        UnixFd(UnixFd&& other)
+        {
+            *this = std::move(other);
+        }
+
+        UnixFd& operator=(UnixFd&& other)
+        {
+            close();
+            fd_ = other.fd_;
+            other.fd_ = -1;
+            return *this;
+        }
+
+        ~UnixFd()
+        {
+            close();
+        }
+
+        int get() const
+        {
+            return fd_;
+        }
+
+        void reset(int fd = -1)
+        {
+            *this = UnixFd{fd};
+        }
+
+        void reset(int fd, adopt_fd_t)
+        {
+            *this = UnixFd{fd, adopt_fd};
+        }
+
+        int release()
+        {
+            auto fd = fd_;
+            fd_ = -1;
+            return fd;
+        }
+
+        bool isValid() const
+        {
+            return fd_ >= 0;
+        }
+
+    private:
+        void close()
+        {
+            if (fd_ >= 0)
+                ::close(fd_);
+        }
+
+        int fd_ = -1;
     };
 
 }

@@ -1,5 +1,6 @@
 /**
- * (C) 2017 KISTLER INSTRUMENTE AG, Winterthur, Switzerland
+ * (C) 2016 - 2017 KISTLER INSTRUMENTE AG, Winterthur, Switzerland
+ * (C) 2016 - 2019 Stanislav Angelovic <angelovic.s@gmail.com>
  *
  * @file TypeTraits.h
  *
@@ -41,21 +42,23 @@ namespace sdbus {
     class ObjectPath;
     class UnixFD;
     class Signature;
-    class Message;
+    struct UnixFd;
     class MethodCall;
     class MethodReply;
     class Signal;
-    class MethodResult;
+    class PropertySetCall;
+    class PropertyGetReply;
     template <typename... _Results> class Result;
+    class Error;
 }
 
 namespace sdbus {
 
-    using method_callback = std::function<void(MethodCall& msg, MethodReply& reply)>;
-    using async_method_callback = std::function<void(MethodCall& msg, MethodResult result)>;
+    using method_callback = std::function<void(MethodCall msg)>;
+    using async_reply_handler = std::function<void(MethodReply& reply, const Error* error)>;
     using signal_handler = std::function<void(Signal& signal)>;
-    using property_set_callback = std::function<void(Message& msg)>;
-    using property_get_callback = std::function<void(Message& reply)>;
+    using property_set_callback = std::function<void(PropertySetCall& msg)>;
+    using property_get_callback = std::function<void(PropertyGetReply& reply)>;
 
     template <typename _T>
     struct signature_of
@@ -297,6 +300,17 @@ namespace sdbus {
         }
     };
 
+    template <>
+    struct signature_of<UnixFd>
+    {
+        static constexpr bool is_valid = true;
+
+        static const std::string str()
+        {
+            return "h";
+        }
+    };
+
     template <typename _Element>
     struct signature_of<std::vector<_Element>>
     {
@@ -380,11 +394,26 @@ namespace sdbus {
         static constexpr bool is_async = false;
     };
 
+    template <typename... _Args>
+    struct function_traits<void(const Error*, _Args...)>
+        : public function_traits_base<void, _Args...>
+    {
+    };
+
     template <typename... _Args, typename... _Results>
     struct function_traits<void(Result<_Results...>, _Args...)>
         : public function_traits_base<std::tuple<_Results...>, _Args...>
     {
         static constexpr bool is_async = true;
+        using async_result_t = Result<_Results...>;
+    };
+
+    template <typename... _Args, typename... _Results>
+    struct function_traits<void(Result<_Results...>&&, _Args...)>
+        : public function_traits_base<std::tuple<_Results...>, _Args...>
+    {
+        static constexpr bool is_async = true;
+        using async_result_t = Result<_Results...>;
     };
 
     template <typename _ReturnType, typename... _Args>
@@ -501,13 +530,22 @@ namespace sdbus {
 
     namespace detail
     {
-        template <class _Function, class _Tuple, std::size_t... _I>
+        template <class _Function, class _Tuple, typename... _Args, std::size_t... _I>
         constexpr decltype(auto) apply_impl( _Function&& f
-                                           , MethodResult&& r
+                                           , Result<_Args...>&& r
                                            , _Tuple&& t
                                            , std::index_sequence<_I...> )
         {
             return std::forward<_Function>(f)(std::move(r), std::get<_I>(std::forward<_Tuple>(t))...);
+        }
+
+        template <class _Function, class _Tuple, std::size_t... _I>
+        constexpr decltype(auto) apply_impl( _Function&& f
+                                           , const Error* e
+                                           , _Tuple&& t
+                                           , std::index_sequence<_I...> )
+        {
+            return std::forward<_Function>(f)(e, std::get<_I>(std::forward<_Tuple>(t))...);
         }
 
         // Version of apply_impl for functions returning non-void values.
@@ -546,11 +584,22 @@ namespace sdbus {
 
     // Convert tuple `t' of values into a list of arguments
     // and invoke function `f' with those arguments.
-    template <class _Function, class _Tuple>
-    constexpr decltype(auto) apply(_Function&& f, MethodResult&& r, _Tuple&& t)
+    template <class _Function, class _Tuple, typename... _Args>
+    constexpr decltype(auto) apply(_Function&& f, Result<_Args...>&& r, _Tuple&& t)
     {
         return detail::apply_impl( std::forward<_Function>(f)
                                  , std::move(r)
+                                 , std::forward<_Tuple>(t)
+                                 , std::make_index_sequence<std::tuple_size<std::decay_t<_Tuple>>::value>{} );
+    }
+
+    // Convert tuple `t' of values into a list of arguments
+    // and invoke function `f' with those arguments.
+    template <class _Function, class _Tuple>
+    constexpr decltype(auto) apply(_Function&& f, const Error* e, _Tuple&& t)
+    {
+        return detail::apply_impl( std::forward<_Function>(f)
+                                 , e
                                  , std::forward<_Tuple>(t)
                                  , std::make_index_sequence<std::tuple_size<std::decay_t<_Tuple>>::value>{} );
     }
